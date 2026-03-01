@@ -1,3 +1,4 @@
+import { usePosts, claimPostInDb } from '../lib/db';
 import { useApp } from '../lib/store';
 import { Eyebrow, Chip } from './UI';
 import type { FoodPost } from '../types';
@@ -10,11 +11,12 @@ function timeAgo(date: Date): string {
 }
 
 function FeedCard({ post }: { post: FoodPost }) {
-  const { claimPost, showToast } = useApp();
+  const { user, showToast } = useApp();
 
-  const handleClaim = () => {
-    claimPost(post.id);
-    showToast('Run claimed! Check your WhatsApp.');
+  const handleClaim = async () => {
+    const ok = await claimPostInDb(post.id, user.firstName);
+    if (ok) showToast('Run claimed! You are on.');
+    else showToast('Could not claim — try again.');
   };
 
   return (
@@ -40,21 +42,36 @@ function FeedCard({ post }: { post: FoodPost }) {
         className={`claim-btn ${post.claimed ? 'taken' : ''}`}
         onClick={!post.claimed ? handleClaim : undefined}
       >
-        {post.claimed ? `✓ Claimed${post.claimedBy ? ` by ${post.claimedBy}` : ''}` : 'Claim this pickup →'}
+        {post.claimed
+          ? `✓ Claimed${post.claimedBy ? ` by ${post.claimedBy}` : ''}`
+          : 'Claim this pickup →'}
       </button>
     </div>
   );
 }
 
 export default function FeedTab() {
-  const { posts } = useApp();
+  const { posts, loading } = usePosts();
   const available = posts.filter(p => !p.claimed).length;
+
+  if (loading) {
+    return (
+      <div className="body">
+        <div className="processing">
+          <div className="plate-spin" style={{ fontSize: 32 }}>🍽️</div>
+          <div className="proc-sub">Loading live feed…</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="body">
       <Eyebrow>Open pickups near Newark, DE · {available} available</Eyebrow>
       {posts.length === 0 ? (
-        <div className="empty">No pickups right now.<br />Check back at closing time.</div>
+        <div className="empty">
+          No pickups right now.<br />Be the first to post surplus food.
+        </div>
       ) : (
         posts.map(post => <FeedCard key={post.id} post={post} />)
       )}

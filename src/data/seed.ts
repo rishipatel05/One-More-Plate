@@ -69,7 +69,7 @@ export const SEED_POSTS: FoodPost[] = [
     condition: 'hot',
     postedAt: new Date(Date.now() - 48 * 60000),
     claimed: true,
-    claimedBy: 'Alex M.',
+    claimedBy: 'Dakshi',
   },
   {
     id: 'p3',
@@ -87,9 +87,9 @@ export const SEED_POSTS: FoodPost[] = [
 
 export const MOCK_VOLUNTEER: Volunteer = {
   id: 'v1',
-  firstName: 'Alex',
-  lastName: 'Morgan',
-  phone: '+13025550123',
+  firstName: 'Dakshi',
+  lastName: 'Kaushik',
+  phone: '3027470804',
   vehicle: 'car',
   maxDistanceMiles: 5,
   availability: ['Weekends', 'Late nights'],
@@ -114,8 +114,8 @@ export const MOCK_ACTIVE_RUN: DeliveryRun = {
 
 export const MOCK_USER: UserAccount = {
   id: 'u1',
-  firstName: 'Alex',
-  lastName: 'Morgan',
+  firstName: 'Dakshi',
+  lastName: 'Kaushik',
   role: 'volunteer',
   vehicle: 'car',
   joinedAt: new Date('2026-02-01'),
