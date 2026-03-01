@@ -46,10 +46,17 @@ export default function DeliverTab() {
   const [phase, setPhase] = useState<RunPhase>('to_restaurant');
   const [photoUploaded, setPhotoUploaded] = useState(false);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+  const [photoName, setPhotoName] = useState<string>('');
+  const [photoSource, setPhotoSource] = useState<'live' | 'attachment' | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraLoading, setCameraLoading] = useState(false);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [locationError, setLocationError] = useState(false);
   const [locationLoading, setLocationLoading] = useState(false);
-  const photoInputRef = useRef<HTMLInputElement>(null);
+  const livePhotoInputRef = useRef<HTMLInputElement>(null);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
   const completionTimeoutRef = useRef<number | null>(null);
 
   const pickupCountdown = useCountdown(activeRun?.estimatedPickupTime ?? null);
@@ -81,6 +88,10 @@ export default function DeliverTab() {
     setPhase('to_restaurant');
     setPhotoUploaded(false);
     setLocationError(false);
+    setPhotoName('');
+    setPhotoSource(null);
+    stopCameraStream();
+    setCameraOpen(false);
     setPhotoPreviewUrl(prev => {
       if (prev) URL.revokeObjectURL(prev);
       return null;
@@ -97,6 +108,18 @@ export default function DeliverTab() {
     }
   }, []);
 
+  const stopCameraStream = () => {
+    const stream = cameraStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      cameraStreamRef.current = null;
+    }
+  };
+
+  useEffect(() => () => {
+    stopCameraStream();
+  }, []);
+
   const openMapsDirections = (dest: { lat: number; lng: number }, label: string) => {
     let url: string;
     if (userLocation) {
@@ -108,20 +131,86 @@ export default function DeliverTab() {
     showToast(`🗺️ Opening directions to ${label}`);
   };
 
-  const handlePhotoUpload = () => {
-    photoInputRef.current?.click();
+  const handleLivePhotoUpload = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      showToast('Camera preview unsupported here. Falling back to file picker.');
+      livePhotoInputRef.current?.click();
+      return;
+    }
+
+    setCameraLoading(true);
+    setCameraOpen(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+        audio: false,
+      });
+      cameraStreamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+    } catch {
+      setCameraOpen(false);
+      showToast('Camera access blocked. Allow permissions or attach photo instead.');
+      livePhotoInputRef.current?.click();
+    } finally {
+      setCameraLoading(false);
+    }
   };
 
-  const handlePhotoSelected = (event: ChangeEvent<HTMLInputElement>) => {
+  const handleAttachmentUpload = () => {
+    attachmentInputRef.current?.click();
+  };
+
+  const handlePhotoSelected = (event: ChangeEvent<HTMLInputElement>, source: 'live' | 'attachment') => {
     const file = event.target.files?.[0];
     if (!file) return;
 
     if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
     const preview = URL.createObjectURL(file);
     setPhotoPreviewUrl(preview);
+    setPhotoName(file.name || 'photo.jpg');
+    setPhotoSource(source);
     setPhotoUploaded(true);
-    showToast('📸 Photo captured!');
+    showToast(source === 'live' ? '📸 Live photo captured!' : '📎 Photo attached!');
     event.target.value = '';
+  };
+
+  const closeCamera = () => {
+    stopCameraStream();
+    setCameraOpen(false);
+  };
+
+  const handleCaptureFromCamera = async () => {
+    const video = videoRef.current;
+    if (!video) return;
+    const width = video.videoWidth || 1280;
+    const height = video.videoHeight || 720;
+    if (!width || !height) return;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, width, height);
+
+    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+    if (!blob) {
+      showToast('Could not capture image. Try again.');
+      return;
+    }
+
+    const file = new File([blob], `live-capture-${Date.now()}.jpg`, { type: 'image/jpeg' });
+    if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+    const preview = URL.createObjectURL(file);
+    setPhotoPreviewUrl(preview);
+    setPhotoName(file.name);
+    setPhotoSource('live');
+    setPhotoUploaded(true);
+    closeCamera();
+    showToast('📸 Live photo captured!');
   };
 
   const handlePickupConfirmed = () => {
@@ -129,7 +218,10 @@ export default function DeliverTab() {
     setPhase('to_shelter');
     if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
     setPhotoPreviewUrl(null);
+    setPhotoName('');
+    setPhotoSource(null);
     setPhotoUploaded(false);
+    closeCamera();
     showToast('✅ Pickup confirmed — heading to shelter!');
     setTimeout(() => openMapsDirections(activeRun.shelter.location, activeRun.shelter.name), 800);
   };
@@ -216,11 +308,18 @@ export default function DeliverTab() {
 
       <div className="body" style={{ paddingTop: 16 }}>
         <input
-          ref={photoInputRef}
+          ref={livePhotoInputRef}
           type="file"
           accept="image/*"
           capture="environment"
-          onChange={handlePhotoSelected}
+          onChange={(e) => handlePhotoSelected(e, 'live')}
+          style={{ display: 'none' }}
+        />
+        <input
+          ref={attachmentInputRef}
+          type="file"
+          accept="image/*"
+          onChange={(e) => handlePhotoSelected(e, 'attachment')}
           style={{ display: 'none' }}
         />
 
@@ -324,10 +423,21 @@ export default function DeliverTab() {
         {phase === 'to_restaurant' && (
           <>
             <Eyebrow>Confirm you collected the food</Eyebrow>
-            <div className={`photo-upload ${photoUploaded ? 'uploaded' : ''}`} onClick={!photoUploaded ? handlePhotoUpload : undefined}>
+            <div className={`photo-upload ${photoUploaded ? 'uploaded' : ''}`}>
               <div className="photo-icon">{photoUploaded ? '✅' : '📸'}</div>
-              <div className="photo-label">{photoUploaded ? 'Photo confirmed' : 'Take a photo of the food'}</div>
+              <div className="photo-label">{photoUploaded ? 'Proof photo ready' : 'Add proof photo of the food'}</div>
               <div className="photo-sub">{photoUploaded ? 'Tap below — shelter directions open automatically' : 'Confirms you picked up the food'}</div>
+              {!photoUploaded && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12 }}>
+                  <button type="button" className="btn btn-outline" onClick={handleLivePhotoUpload}>📸 Take live photo</button>
+                  <button type="button" className="btn btn-outline" onClick={handleAttachmentUpload}>📎 Attach photo</button>
+                </div>
+              )}
+              {photoUploaded && (
+                <div style={{ marginTop: 10, fontSize: 11, color: 'var(--warm-grey)' }}>
+                  {photoSource === 'live' ? 'Source: Live capture' : 'Source: Attachment'} · {photoName}
+                </div>
+              )}
               {photoPreviewUrl && (
                 <img
                   src={photoPreviewUrl}
@@ -345,10 +455,21 @@ export default function DeliverTab() {
         {phase === 'to_shelter' && (
           <>
             <Eyebrow>Confirm delivery at shelter</Eyebrow>
-            <div className={`photo-upload ${photoUploaded ? 'uploaded' : ''}`} onClick={!photoUploaded ? handlePhotoUpload : undefined}>
+            <div className={`photo-upload ${photoUploaded ? 'uploaded' : ''}`}>
               <div className="photo-icon">{photoUploaded ? '✅' : '📸'}</div>
-              <div className="photo-label">{photoUploaded ? 'Delivery confirmed' : 'Take a photo at the shelter'}</div>
+              <div className="photo-label">{photoUploaded ? 'Delivery proof ready' : 'Take or attach a shelter photo'}</div>
               <div className="photo-sub">{photoUploaded ? 'Tap below to complete the run' : 'Proves food was delivered safely'}</div>
+              {!photoUploaded && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12 }}>
+                  <button type="button" className="btn btn-outline" onClick={handleLivePhotoUpload}>📸 Take live photo</button>
+                  <button type="button" className="btn btn-outline" onClick={handleAttachmentUpload}>📎 Attach photo</button>
+                </div>
+              )}
+              {photoUploaded && (
+                <div style={{ marginTop: 10, fontSize: 11, color: 'var(--warm-grey)' }}>
+                  {photoSource === 'live' ? 'Source: Live capture' : 'Source: Attachment'} · {photoName}
+                </div>
+              )}
               {photoPreviewUrl && (
                 <img
                   src={photoPreviewUrl}
@@ -361,6 +482,54 @@ export default function DeliverTab() {
               🎉 Mark run as complete
             </button>
           </>
+        )}
+
+        {cameraOpen && (
+          <div style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.72)',
+            zIndex: 200,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}>
+            <div style={{
+              width: '100%',
+              maxWidth: 420,
+              background: 'var(--ink)',
+              borderRadius: 10,
+              padding: 12,
+              border: '1px solid rgba(255,255,255,0.2)',
+            }}>
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>
+                Live camera capture
+              </div>
+              <div style={{ background: '#000', borderRadius: 8, overflow: 'hidden', marginBottom: 10 }}>
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  style={{ width: '100%', height: 300, objectFit: 'cover' }}
+                />
+              </div>
+              {cameraLoading && (
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', marginBottom: 10 }}>
+                  Starting camera…
+                </div>
+              )}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <button type="button" className="btn btn-outline" onClick={closeCamera}>
+                  Cancel
+                </button>
+                <button type="button" className="btn" onClick={() => void handleCaptureFromCamera()} disabled={cameraLoading}>
+                  Capture photo
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {phase === 'complete' && (
