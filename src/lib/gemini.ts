@@ -9,6 +9,12 @@ const MODEL_CANDIDATES = [
   'gemini-1.5-flash',
 ].filter(Boolean) as string[];
 
+interface FoodPhotoValidation {
+  isFood: boolean;
+  confidence: number;
+  reason: string;
+}
+
 async function generateTextWithFallbackModels(prompt: string): Promise<string> {
   if (!geminiApiKey) {
     throw new Error('Missing VITE_GEMINI_API_KEY');
@@ -27,6 +33,87 @@ async function generateTextWithFallbackModels(prompt: string): Promise<string> {
   }
 
   throw lastError ?? new Error('Gemini returned empty response');
+}
+
+async function fileToBase64(file: File): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result ?? '');
+      const base64 = result.includes(',') ? result.split(',')[1] : result;
+      if (!base64) {
+        reject(new Error('Failed to encode image'));
+        return;
+      }
+      resolve(base64);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read image'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function clampConfidence(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+export async function validateFoodProofPhoto(file: File): Promise<FoodPhotoValidation> {
+  if (!geminiApiKey) {
+    return {
+      isFood: false,
+      confidence: 0,
+      reason: 'Gemini key missing. Cannot verify food photo.',
+    };
+  }
+
+  const prompt = `
+You are verifying delivery proof photos for a food rescue app.
+Decide if this image clearly shows real food (meals, ingredients, packaged food trays, dishes).
+
+Return ONLY valid JSON:
+{
+  "isFood": true or false,
+  "confidence": number from 0 to 1,
+  "reason": "very short reason"
+}
+`;
+
+  try {
+    const base64 = await fileToBase64(file);
+    let lastError: unknown = null;
+
+    for (const modelName of MODEL_CANDIDATES) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName });
+        const result = await model.generateContent([
+          { text: prompt },
+          {
+            inlineData: {
+              mimeType: file.type || 'image/jpeg',
+              data: base64,
+            },
+          },
+        ]);
+        const raw = result.response.text().replace(/```json|```/g, '').trim();
+        const parsed = JSON.parse(raw) as Partial<FoodPhotoValidation>;
+        const isFood = Boolean(parsed.isFood);
+        const confidence = clampConfidence(Number(parsed.confidence ?? 0));
+        const reason = String(parsed.reason ?? '').trim() || (isFood ? 'Food detected.' : 'Food not detected.');
+        return { isFood, confidence, reason };
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    throw lastError ?? new Error('No model produced validation response');
+  } catch (err) {
+    console.error('Gemini image validation failed:', err);
+    return {
+      isFood: false,
+      confidence: 0,
+      reason: 'Could not verify this image as food. Please try another photo.',
+    };
+  }
 }
 
 export async function analyzeAndStructureFoodPost(

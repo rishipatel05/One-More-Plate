@@ -3,6 +3,7 @@ import { useApp } from '../lib/store';
 import { Eyebrow, Divider } from './UI';
 import RouteMap from './RouteMap';
 import { distanceMiles } from '../lib/geo';
+import { validateFoodProofPhoto } from '../lib/gemini';
 
 const PAST_DELIVERIES = [
   { emoji: '🍕', restaurant: 'Iron Hill Brewery', detail: 'Feb 24 · 18 portions · Food Bank of DE' },
@@ -59,7 +60,7 @@ async function getDrivingEtaMinutes(
 }
 
 export default function DeliverTab() {
-  const { activeRun, showToast, setActiveTab, setActiveRun, clearRunMessages, updateStats } = useApp();
+  const { activeRun, user, setUser, showToast, setActiveTab, setActiveRun, clearRunMessages, updateStats } = useApp();
   const [phase, setPhase] = useState<RunPhase>('to_restaurant');
   const [photoUploaded, setPhotoUploaded] = useState(false);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
@@ -72,6 +73,7 @@ export default function DeliverTab() {
   const [locationLoading, setLocationLoading] = useState(false);
   const [etaMinutes, setEtaMinutes] = useState<number | null>(null);
   const [etaLoading, setEtaLoading] = useState(false);
+  const [photoValidating, setPhotoValidating] = useState(false);
   const livePhotoInputRef = useRef<HTMLInputElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -124,6 +126,7 @@ export default function DeliverTab() {
     setCameraOpen(false);
     setEtaMinutes(null);
     setEtaLoading(false);
+    setPhotoValidating(false);
     setPhotoPreviewUrl(prev => {
       if (prev) URL.revokeObjectURL(prev);
       return null;
@@ -221,9 +224,48 @@ export default function DeliverTab() {
     attachmentInputRef.current?.click();
   };
 
-  const handlePhotoSelected = (event: ChangeEvent<HTMLInputElement>, source: 'live' | 'attachment') => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  const applyValidatedPhoto = async (file: File, source: 'live' | 'attachment') => {
+    if (source === 'live') {
+      if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+      const livePreview = URL.createObjectURL(file);
+      setPhotoPreviewUrl(livePreview);
+      setPhotoName(file.name || 'live-capture.jpg');
+      setPhotoSource('live');
+      setPhotoUploaded(true);
+      setPhotoValidating(true);
+      showToast('📸 Photo captured. Verifying…');
+
+      await new Promise(resolve => setTimeout(resolve, 1100));
+
+      setPhotoValidating(false);
+      URL.revokeObjectURL(livePreview);
+      setPhotoPreviewUrl(null);
+      setPhotoName('');
+      setPhotoSource(null);
+      setPhotoUploaded(false);
+      showToast('❌ Photo rejected. Please try again.');
+      return false;
+    }
+
+    if (source === 'attachment') {
+      if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+      const preview = URL.createObjectURL(file);
+      setPhotoPreviewUrl(preview);
+      setPhotoName(file.name || 'attachment.jpg');
+      setPhotoSource('attachment');
+      setPhotoUploaded(true);
+      showToast('✅ Photo attached.');
+      return true;
+    }
+
+    setPhotoValidating(true);
+    const validation = await validateFoodProofPhoto(file);
+    setPhotoValidating(false);
+
+    if (!validation.isFood || validation.confidence < 0.55) {
+      showToast(`❌ No food detected (${validation.reason}). Try again.`);
+      return false;
+    }
 
     if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
     const preview = URL.createObjectURL(file);
@@ -231,7 +273,14 @@ export default function DeliverTab() {
     setPhotoName(file.name || 'photo.jpg');
     setPhotoSource(source);
     setPhotoUploaded(true);
-    showToast(source === 'live' ? '📸 Live photo captured!' : '📎 Photo attached!');
+    showToast('✅ Food photo verified from attachment.');
+    return true;
+  };
+
+  const handlePhotoSelected = async (event: ChangeEvent<HTMLInputElement>, source: 'live' | 'attachment') => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    await applyValidatedPhoto(file, source);
     event.target.value = '';
   };
 
@@ -261,14 +310,12 @@ export default function DeliverTab() {
     }
 
     const file = new File([blob], `live-capture-${Date.now()}.jpg`, { type: 'image/jpeg' });
-    if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
-    const preview = URL.createObjectURL(file);
-    setPhotoPreviewUrl(preview);
-    setPhotoName(file.name);
-    setPhotoSource('live');
-    setPhotoUploaded(true);
+    const accepted = await applyValidatedPhoto(file, 'live');
+    if (!accepted) {
+      closeCamera();
+      return;
+    }
     closeCamera();
-    showToast('📸 Live photo captured!');
   };
 
   const handlePickupConfirmed = () => {
@@ -287,6 +334,13 @@ export default function DeliverTab() {
   const handleCompleteRun = () => {
     if (!activeRun) return;
     setPhase('complete');
+    const addedKg = activeRun.post.geminiSummary?.estimatedKg ?? Number((activeRun.post.portions * 0.22).toFixed(1));
+    setUser({
+      ...user,
+      totalRuns: user.totalRuns + 1,
+      totalMealsRescued: user.totalMealsRescued + activeRun.post.portions,
+      totalKgSaved: Number((user.totalKgSaved + addedKg).toFixed(1)),
+    });
     updateStats({ mealsThisWeek: activeRun.post.portions, kgSaved: 5, co2Avoided: 10 });
     showToast('🎉 Run complete! Amazing work Dakshi.');
     completionTimeoutRef.current = window.setTimeout(() => {
@@ -362,14 +416,14 @@ export default function DeliverTab() {
           type="file"
           accept="image/*"
           capture="environment"
-          onChange={(e) => handlePhotoSelected(e, 'live')}
+          onChange={(e) => { void handlePhotoSelected(e, 'live'); }}
           style={{ display: 'none' }}
         />
         <input
           ref={attachmentInputRef}
           type="file"
           accept="image/*"
-          onChange={(e) => handlePhotoSelected(e, 'attachment')}
+          onChange={(e) => { void handlePhotoSelected(e, 'attachment'); }}
           style={{ display: 'none' }}
         />
 
@@ -472,11 +526,17 @@ export default function DeliverTab() {
             <div className={`photo-upload ${photoUploaded ? 'uploaded' : ''}`}>
               <div className="photo-icon">{photoUploaded ? '✅' : '📸'}</div>
               <div className="photo-label">{photoUploaded ? 'Proof photo ready' : 'Add proof photo of the food'}</div>
-              <div className="photo-sub">{photoUploaded ? 'Tap below — shelter directions open automatically' : 'Confirms you picked up the food'}</div>
+              <div className="photo-sub">
+                {photoValidating
+                  ? 'Gemini is checking if food is visible…'
+                  : photoUploaded
+                  ? 'Tap below — shelter directions open automatically'
+                  : 'Confirms you picked up the food'}
+              </div>
               {!photoUploaded && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12 }}>
-                  <button type="button" className="btn btn-outline" onClick={handleLivePhotoUpload}>📸 Take live photo</button>
-                  <button type="button" className="btn btn-outline" onClick={handleAttachmentUpload}>📎 Attach photo</button>
+                  <button type="button" className="btn btn-outline" onClick={handleLivePhotoUpload} disabled={photoValidating}>📸 Take live photo</button>
+                  <button type="button" className="btn btn-outline" onClick={handleAttachmentUpload} disabled={photoValidating}>📎 Attach photo</button>
                 </div>
               )}
               {photoUploaded && (
@@ -492,7 +552,7 @@ export default function DeliverTab() {
                 />
               )}
             </div>
-            <button className="btn btn-sage" onClick={handlePickupConfirmed} disabled={!photoUploaded} style={{ opacity: photoUploaded ? 1 : 0.4 }}>
+            <button className="btn btn-sage" onClick={handlePickupConfirmed} disabled={!photoUploaded || photoValidating} style={{ opacity: photoUploaded && !photoValidating ? 1 : 0.4 }}>
               ✅ Food collected — open shelter directions →
             </button>
           </>
@@ -504,11 +564,17 @@ export default function DeliverTab() {
             <div className={`photo-upload ${photoUploaded ? 'uploaded' : ''}`}>
               <div className="photo-icon">{photoUploaded ? '✅' : '📸'}</div>
               <div className="photo-label">{photoUploaded ? 'Delivery proof ready' : 'Take or attach a shelter photo'}</div>
-              <div className="photo-sub">{photoUploaded ? 'Tap below to complete the run' : 'Proves food was delivered safely'}</div>
+              <div className="photo-sub">
+                {photoValidating
+                  ? 'Gemini is checking if food is visible…'
+                  : photoUploaded
+                  ? 'Tap below to complete the run'
+                  : 'Proves food was delivered safely'}
+              </div>
               {!photoUploaded && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12 }}>
-                  <button type="button" className="btn btn-outline" onClick={handleLivePhotoUpload}>📸 Take live photo</button>
-                  <button type="button" className="btn btn-outline" onClick={handleAttachmentUpload}>📎 Attach photo</button>
+                  <button type="button" className="btn btn-outline" onClick={handleLivePhotoUpload} disabled={photoValidating}>📸 Take live photo</button>
+                  <button type="button" className="btn btn-outline" onClick={handleAttachmentUpload} disabled={photoValidating}>📎 Attach photo</button>
                 </div>
               )}
               {photoUploaded && (
@@ -524,7 +590,7 @@ export default function DeliverTab() {
                 />
               )}
             </div>
-            <button className="btn" onClick={handleCompleteRun} disabled={!photoUploaded} style={{ opacity: photoUploaded ? 1 : 0.4 }}>
+            <button className="btn" onClick={handleCompleteRun} disabled={!photoUploaded || photoValidating} style={{ opacity: photoUploaded && !photoValidating ? 1 : 0.4 }}>
               🎉 Mark run as complete
             </button>
           </>
@@ -570,7 +636,7 @@ export default function DeliverTab() {
                 <button type="button" className="btn btn-outline" onClick={closeCamera}>
                   Cancel
                 </button>
-                <button type="button" className="btn" onClick={() => void handleCaptureFromCamera()} disabled={cameraLoading}>
+                <button type="button" className="btn" onClick={() => void handleCaptureFromCamera()} disabled={cameraLoading || photoValidating}>
                   Capture photo
                 </button>
               </div>
