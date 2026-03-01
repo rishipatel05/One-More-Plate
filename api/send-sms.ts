@@ -11,41 +11,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Missing to or message' });
   }
 
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-  const fromNumber = process.env.TWILIO_PHONE_NUMBER;
-
-  if (!accountSid || !authToken || !fromNumber) {
-    return res.status(500).json({ error: 'Twilio credentials not configured' });
-  }
-
-  const credentials = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
-
   try {
-    const response = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Basic ${credentials}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: new URLSearchParams({
-          To: to,
-          From: fromNumber,
-          Body: message,
-        }),
-      }
-    );
+    const response = await fetch('https://textbelt.com/text', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        phone: to,
+        message,
+        key: 'textbelt',
+      }),
+    });
 
-    const data = await response.json();
+    const data = await response.json() as { success: boolean; error?: string; quotaRemaining?: number };
 
-    if (!response.ok) {
-      console.error('Twilio error:', data);
-      return res.status(400).json({ error: data.message });
+    if (!data.success) {
+      console.error('Textbelt error:', data.error);
+      return res.status(400).json({ error: data.error });
     }
 
-    return res.status(200).json({ success: true, sid: data.sid });
+    console.log('SMS sent! Quota remaining:', data.quotaRemaining);
+    return res.status(200).json({ success: true });
   } catch (err) {
     console.error('SMS error:', err);
     return res.status(500).json({ error: 'Failed to send SMS' });

@@ -11,12 +11,12 @@ function timeAgo(date: Date): string {
 }
 
 function FeedCard({ post }: { post: FoodPost }) {
-  const { user, showToast } = useApp();
+  const { user, showToast, claimPost } = useApp();
 
   const handleClaim = async () => {
-    const ok = await claimPostInDb(post.id, user.firstName);
-    if (ok) showToast('Run claimed! You are on.');
-    else showToast('Could not claim — try again.');
+    await claimPostInDb(post.id, user.firstName);
+    claimPost(post.id);
+    showToast('Run claimed! Opening delivery tracker…');
   };
 
   return (
@@ -44,7 +44,7 @@ function FeedCard({ post }: { post: FoodPost }) {
       >
         {post.claimed
           ? `✓ Claimed${post.claimedBy ? ` by ${post.claimedBy}` : ''}`
-          : 'Claim this pickup →'}
+          : '🚗 Claim this pickup →'}
       </button>
     </div>
   );
