@@ -53,34 +53,69 @@ export function lookupKnownRestaurantLocation(name: string): LatLng | null {
   return found?.restaurantLocation ?? null;
 }
 
-export async function geocodeAddress(address: string): Promise<LatLng | null> {
-  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-  if (!apiKey || !address.trim()) return null;
-
-  try {
-    const params = new URLSearchParams({
-      address,
-      key: apiKey,
-    });
-    const res = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?${params.toString()}`);
-    if (!res.ok) return null;
-    const data = await res.json() as {
-      status?: string;
-      results?: Array<{ geometry: { location: LatLng } }>;
-    };
-
-    if (data.status !== 'OK' || !data.results?.[0]) return null;
-    return data.results[0].geometry.location;
-  } catch {
-    return null;
-  }
-}
-
 interface PlaceTextResult {
   geometry?: { location?: LatLng };
   formatted_address?: string;
   name?: string;
   types?: string[];
+}
+
+interface NominatimResult {
+  lat: string;
+  lon: string;
+  display_name: string;
+  name?: string;
+  class?: string;
+  type?: string;
+}
+
+function toLatLng(lat: string, lon: string): LatLng | null {
+  const parsedLat = Number(lat);
+  const parsedLng = Number(lon);
+  if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) return null;
+  return { lat: parsedLat, lng: parsedLng };
+}
+
+function scoreCandidate(queryName: string, displayName: string): number {
+  const q = normalize(queryName);
+  const d = normalize(displayName);
+  if (!q || !d) return 0;
+  if (d.includes(q)) return 3;
+  const qWords = q.split(' ');
+  const hits = qWords.filter(w => d.includes(w)).length;
+  return hits / Math.max(qWords.length, 1);
+}
+
+async function nominatimSearch(query: string): Promise<{ location: LatLng; formattedAddress?: string } | null> {
+  if (!query.trim()) return null;
+  try {
+    const params = new URLSearchParams({
+      q: query,
+      format: 'jsonv2',
+      addressdetails: '1',
+      limit: '6',
+      countrycodes: 'us',
+    });
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
+      headers: { 'Accept-Language': 'en' },
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as NominatimResult[];
+    if (!Array.isArray(data) || data.length === 0) return null;
+
+    const sorted = [...data].sort((a, b) => {
+      const scoreA = scoreCandidate(query, a.display_name);
+      const scoreB = scoreCandidate(query, b.display_name);
+      return scoreB - scoreA;
+    });
+
+    const best = sorted[0];
+    const location = toLatLng(best.lat, best.lon);
+    if (!location) return null;
+    return { location, formattedAddress: best.display_name };
+  } catch {
+    return null;
+  }
 }
 
 async function textSearchRestaurant(query: string): Promise<{ location: LatLng; formattedAddress?: string } | null> {
@@ -119,12 +154,45 @@ function isLikelyGenericAddress(address: string): boolean {
   );
 }
 
+export async function geocodeAddress(address: string): Promise<LatLng | null> {
+  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+  if (!address.trim()) return null;
+
+  if (apiKey) {
+    try {
+      const params = new URLSearchParams({
+        address,
+        key: apiKey,
+      });
+      const res = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json() as {
+          status?: string;
+          results?: Array<{ geometry: { location: LatLng } }>;
+        };
+
+        if (data.status === 'OK' && data.results?.[0]) {
+          return data.results[0].geometry.location;
+        }
+      }
+    } catch {
+      // Fall through to browser-safe fallback
+    }
+  }
+
+  const osm = await nominatimSearch(address);
+  return osm?.location ?? null;
+}
+
 export async function resolveRestaurantLocation(name: string, address?: string): Promise<LatLng | null> {
   const known = lookupKnownRestaurantLocation(name);
   if (known) return known;
 
   const byPlaceSearch = await textSearchRestaurant(`${name}, Newark, DE`);
   if (byPlaceSearch) return byPlaceSearch.location;
+
+  const byOsm = await nominatimSearch(`${name}, Newark, Delaware`);
+  if (byOsm) return byOsm.location;
 
   const addr = address?.trim();
   if (addr) {
@@ -144,11 +212,21 @@ export async function resolveRestaurantDetails(name: string, address?: string): 
     return { location: byPlaceSearch.location, formattedAddress: byPlaceSearch.formattedAddress || address };
   }
 
+  const byOsmName = await nominatimSearch(`${name} restaurant, Newark, Delaware`);
+  if (byOsmName) {
+    return { location: byOsmName.location, formattedAddress: byOsmName.formattedAddress || address };
+  }
+
   const addr = address?.trim();
   if (addr && !isLikelyGenericAddress(addr)) {
     const byAddress = await geocodeAddress(addr);
     if (byAddress) return { location: byAddress, formattedAddress: addr };
   }
 
-  return { location: null, formattedAddress: address };
+  const fallback = await nominatimSearch(`${name}, Newark, Delaware`);
+  if (fallback) {
+    return { location: fallback.location, formattedAddress: fallback.formattedAddress || address };
+  }
+
+  return { location: null, formattedAddress: address || `${name}, Newark, DE` };
 }

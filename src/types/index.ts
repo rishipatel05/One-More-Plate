@@ -3,6 +3,7 @@ export type VehicleType = 'walking' | 'bicycle' | 'car';
 export type RunStatus = 'pending' | 'accepted' | 'en_route_pickup' | 'picked_up' | 'delivered';
 export type UserRole = 'restaurant' | 'volunteer' | 'both';
 export type NeedLevel = 'high' | 'medium' | 'low';
+export type ChatSender = 'driver' | 'restaurant';
 
 export interface LatLng {
   lat: number;
@@ -101,4 +102,11 @@ export interface CommunityStats {
   kgSaved: number;
   co2Avoided: number;
   activeRestaurants: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  sender: ChatSender;
+  text: string;
+  createdAt: Date;
 }

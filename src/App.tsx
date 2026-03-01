@@ -4,6 +4,7 @@ import Header from './components/Header';
 import PostTab from './components/PostTab';
 import FeedTab from './components/FeedTab';
 import DeliverTab from './components/DeliverTab';
+import MessagesTab from './components/MessagesTab';
 import VolunteerTab from './components/VolunteerTab';
 import AccountTab from './components/AccountTab';
 
@@ -31,6 +32,7 @@ export default function App() {
         {activeTab === 'post' && <PostTab />}
         {activeTab === 'feed' && <FeedTab />}
         {activeTab === 'deliver' && <DeliverTab />}
+        {activeTab === 'messages' && <MessagesTab />}
         {activeTab === 'volunteer' && <VolunteerTab />}
         {activeTab === 'account' && <AccountTab />}
       </div>

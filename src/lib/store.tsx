@@ -1,9 +1,9 @@
 import { createContext, useContext, useState, type ReactNode } from 'react';
-import type { FoodPost, DeliveryRun, UserAccount, CommunityStats } from '../types';
+import type { FoodPost, DeliveryRun, UserAccount, CommunityStats, ChatMessage } from '../types';
 import { MOCK_USER, COMMUNITY_STATS, SHELTERS } from '../data/seed';
 import { distanceMiles, getNearestShelter } from './geo';
 
-type Tab = 'post' | 'feed' | 'deliver' | 'volunteer' | 'account';
+type Tab = 'post' | 'feed' | 'deliver' | 'messages' | 'volunteer' | 'account';
 
 interface AppState {
   activeTab: Tab;
@@ -13,6 +13,9 @@ interface AppState {
   claimPost: (post: FoodPost, claimedBy?: string) => void;
   activeRun: DeliveryRun | null;
   setActiveRun: (r: DeliveryRun | null) => void;
+  runMessages: ChatMessage[];
+  addRunMessage: (message: ChatMessage) => void;
+  clearRunMessages: () => void;
   user: UserAccount;
   setUser: (u: UserAccount) => void;
   stats: CommunityStats;
@@ -29,6 +32,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [activeTab, setActiveTab] = useState<Tab>('post');
   const [posts, setPosts] = useState<FoodPost[]>([]);
   const [activeRun, setActiveRun] = useState<DeliveryRun | null>(null);
+  const [runMessages, setRunMessages] = useState<ChatMessage[]>([]);
   const [user, setUser] = useState<UserAccount>(MOCK_USER);
   const [stats, setStats] = useState<CommunityStats>(COMMUNITY_STATS);
   const [toast, setToast] = useState('');
@@ -70,8 +74,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     setPosts(prev => [claimed, ...prev.filter(p => p.id !== claimed.id)]);
     setActiveRun(run);
+    setRunMessages([
+      {
+        id: `msg-${Date.now()}-1`,
+        sender: 'restaurant',
+        text: `Hi ${claimedBy}, thanks for claiming this run. Ask us anything before pickup.`,
+        createdAt: now,
+      }
+    ]);
     setActiveTab('deliver');
   };
+
+  const addRunMessage = (message: ChatMessage) => {
+    setRunMessages(prev => [...prev, message]);
+  };
+
+  const clearRunMessages = () => setRunMessages([]);
 
   const updateStats = (delta: Partial<CommunityStats>) =>
     setStats(prev => ({
@@ -91,6 +109,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       activeTab, setActiveTab,
       posts, addPost, claimPost,
       activeRun, setActiveRun,
+      runMessages, addRunMessage, clearRunMessages,
       user, setUser,
       stats, updateStats,
       toast, showToast,

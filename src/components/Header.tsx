@@ -1,11 +1,12 @@
 import { useApp } from '../lib/store';
 
-type Tab = 'post' | 'feed' | 'deliver' | 'volunteer' | 'account';
+type Tab = 'post' | 'feed' | 'deliver' | 'messages' | 'volunteer' | 'account';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'post', label: 'Post' },
   { id: 'feed', label: 'Available' },
   { id: 'deliver', label: 'Delivery' },
+  { id: 'messages', label: 'Messages' },
   { id: 'volunteer', label: 'Volunteer' },
   { id: 'account', label: 'Account' },
 ];

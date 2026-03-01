@@ -42,7 +42,7 @@ function useCountdown(targetTime: Date | null) {
 }
 
 export default function DeliverTab() {
-  const { activeRun, showToast, setActiveTab, updateStats } = useApp();
+  const { activeRun, showToast, setActiveTab, setActiveRun, clearRunMessages, updateStats } = useApp();
   const [phase, setPhase] = useState<RunPhase>('to_restaurant');
   const [photoUploaded, setPhotoUploaded] = useState(false);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
@@ -50,12 +50,18 @@ export default function DeliverTab() {
   const [locationError, setLocationError] = useState(false);
   const [locationLoading, setLocationLoading] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
+  const completionTimeoutRef = useRef<number | null>(null);
 
   const pickupCountdown = useCountdown(activeRun?.estimatedPickupTime ?? null);
   const deliveryCountdown = useCountdown(activeRun?.estimatedDeliveryTime ?? null);
 
   useEffect(() => {
-    if (activeRun && navigator.geolocation) {
+    if (!activeRun) {
+      setLocationLoading(false);
+      setUserLocation(null);
+      return;
+    }
+    if (navigator.geolocation) {
       setLocationLoading(true);
       navigator.geolocation.getCurrentPosition(
         (pos) => {
@@ -69,11 +75,27 @@ export default function DeliverTab() {
         { enableHighAccuracy: true }
       );
     }
-  }, [activeRun]);
+  }, [activeRun?.id]);
+
+  useEffect(() => {
+    setPhase('to_restaurant');
+    setPhotoUploaded(false);
+    setLocationError(false);
+    setPhotoPreviewUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  }, [activeRun?.id]);
 
   useEffect(() => () => {
     if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
   }, [photoPreviewUrl]);
+
+  useEffect(() => () => {
+    if (completionTimeoutRef.current) {
+      window.clearTimeout(completionTimeoutRef.current);
+    }
+  }, []);
 
   const openMapsDirections = (dest: { lat: number; lng: number }, label: string) => {
     let url: string;
@@ -113,10 +135,16 @@ export default function DeliverTab() {
   };
 
   const handleCompleteRun = () => {
+    if (!activeRun) return;
     setPhase('complete');
-    updateStats({ mealsThisWeek: activeRun?.post.portions ?? 10, kgSaved: 5, co2Avoided: 10 });
+    updateStats({ mealsThisWeek: activeRun.post.portions, kgSaved: 5, co2Avoided: 10 });
     showToast('🎉 Run complete! Amazing work Dakshi.');
-    setTimeout(() => setActiveTab('account'), 2000);
+    completionTimeoutRef.current = window.setTimeout(() => {
+      clearRunMessages();
+      setActiveRun(null);
+      setActiveTab('feed');
+      showToast('Run completed. Claim the next pickup when ready.');
+    }, 2000);
   };
 
   if (!activeRun) {
@@ -339,7 +367,7 @@ export default function DeliverTab() {
           <div style={{ textAlign: 'center', padding: '24px 0' }}>
             <div style={{ fontSize: 48, marginBottom: 12 }}>🎉</div>
             <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 20, color: 'var(--ink)', marginBottom: 8 }}>Run complete, Dakshi!</div>
-            <div style={{ fontSize: 13, color: 'var(--warm-grey)', lineHeight: 1.6 }}>{activeRun.post.portions} meals rescued · heading to your profile…</div>
+            <div style={{ fontSize: 13, color: 'var(--warm-grey)', lineHeight: 1.6 }}>{activeRun.post.portions} meals rescued · resetting for your next run…</div>
           </div>
         )}
 
